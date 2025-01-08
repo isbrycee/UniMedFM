@@ -1,0 +1,61 @@
+TRAINING:
+  CUDA_DEVICE_ORDER: 'PCI_BUS_ID'
+  USE_GPU: True
+  EPOCHS: 70
+  CHECKPOINT: './checkpoints/'
+  LOGGING_PERIOD: 200
+  LOGGING_PATH: './logs/'
+  CHECKPOINT_PERIOD: 500
+  EARLY_STOPPING: False
+  EARLY_STOPPING_DELTA: 0.00001
+  EARLY_STOPPING_PATIENCE: 5
+
+TESTING:
+  USE_GPU: True
+
+MODEL:
+  TYPE: 'ViT3D'
+  img_size: [128,128,128]
+  patch_size: 16
+  in_chans: 1
+  n_classes: None
+  embed_dim: 768
+  depth: 12
+  n_heads: 12
+  mlp_ratio: 4.0
+  qkv_bias: True
+  p: 0.1
+  attn_p: 0.1
+  patch_embed_fun: 'unet3d'
+
+ADNI1:
+  dataroot: "./ADNI1_preprocessed_arranged/*/hdbet_*[!mask].nii.gz"
+  labelsroot: "./data/ADNI1_15T_UNIQUE.csv"
+  mode: 'training'
+
+ADNI2:
+  dataroot: "./data/ADNI2/*/hdbet_*[!mask].nii.gz"
+  labelsroot: "./data/adni2_unique_sorted_13022023.csv"
+  mode: 'training'
+
+OASIS3:
+  dataroot: "./OASIS3/scans/*/*/*/hdbet*[!mask].nii.gz"
+  labelsroot: "./data/OASIS3_CLOSEST_LABELS_ONLY_HEALTHY.csv"
+  mode: 'training'
+
+DATALOADER:
+  TRAIN_TEST_SPLIT_PATH: "./train_test_split/"
+  BATCH_SIZE: 1
+  NUM_WORKERS: 8
+
+SOLVER:
+  optimizer: 'AdamW'
+  lr: 0.00001
+  weight_decay: 0.3
+
+TRANSFORMS:
+  spacing: [1.75, 1.75, 1.75]
+  resize: [128, 128, 128]
+  orientation: "RAS"
+  cache_dir_train: None
+  cache_dir_test: None
