@@ -175,11 +175,14 @@ def read_excel_for_MRI_data(excel_path):
     
     # 获取第3、4、5、6列以及倒数第二列的列号
     columns_of_interest = [2, 3, 4, 5, len(df.columns) - 2]  # Python中列索引从0开始
-
+    columns_of_interest = [1, 2, 5, 6, -1]  # Python中列索引从0开始
     # 遍历第一列的每一行
     for index, row in df.iterrows():
         # 第一列作为key
-        key = row[df.columns[0]].lower()
+        if type(row[df.columns[0]]) == int:
+            key = str(row[df.columns[0]]).zfill(3)
+        else:
+            key = row[df.columns[0]].lower()
         
         # 创建一个字典来存储指定列的表头和对应的值
         value_dict = {}
@@ -202,7 +205,7 @@ def set_seed(seed=42):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-set_seed(42) # 2025
+set_seed(2025) # 2025
 
 # 自定义数据集类
 class MRIDataset(Dataset):
@@ -237,7 +240,7 @@ class MRIDataset(Dataset):
         img = nib.load(file_path).get_fdata()
         initial_img = img
         mask_file_path = file_path.replace('imagesTr', 'labelsTr')
-        if 'pred_by_SAM-Med3D' in mask_file_path:
+        if 'predmask' in mask_file_path:
             mask_file_path = mask_file_path.split('.nii.gz')[0] + '_pred_best.nii.gz'
         mask_data = nib.load(mask_file_path).get_fdata()
         # print(img.shape)
@@ -264,7 +267,8 @@ class MRIDataset(Dataset):
                                         min_coords[1]:max_coords[1]+1, 
                                         min_coords[2]:max_coords[2]+1]
         #################################################################
-        
+        if img.size==0: # in case of no tumour was detected
+            img = initial_img
         # # 转换为 float32 并归一化
         img = img.astype(np.float32)
         img = (img - np.min(img)) / (np.max(img) - np.min(img) + 1e-8)
@@ -286,7 +290,7 @@ class MRIDataset(Dataset):
         if self.transform:
             img = self.transform(img)
 
-        return torch.tensor(img, dtype=torch.float32), torch.tensor(img_for_M3D_CLIP, dtype=torch.float32), torch.tensor(label, dtype=torch.long)
+        return torch.tensor(img, dtype=torch.float32), torch.tensor(img_for_M3D_CLIP, dtype=torch.float32), torch.tensor(label, dtype=torch.long), file_name
     
     def resize(self, img, target_size):
         """
@@ -329,7 +333,7 @@ def create_dataloaders(train_data_dir, test_data_dir, label_dict, batch_size=4, 
     val_dataset = MRIDataset(test_data_dir, label_dict, is_crop=is_crop, padding_size=padding_size)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=1)
 
     return train_loader, val_loader
 
@@ -452,23 +456,29 @@ def evaluate_model(model, M3D_CLIP_Model, data_loader, device):
     model.eval()
     preds = []
     targets = []
-    
+    val_preds_softmax = []
+
     with torch.no_grad():
-        for imgs, img_for_M3D_CLIP, labels in data_loader:
+        for imgs, img_for_M3D_CLIP, labels, file_name in data_loader:
             imgs, img_for_M3D_CLIP, labels = imgs.to(device), img_for_M3D_CLIP.to(device), labels.to(device)
             M3D_CLIP_visual_features = M3D_CLIP_Model.encode_image(img_for_M3D_CLIP)[:, 0] # (bs, 768)
-        
+
             # 前向传播
             outputs = model(imgs, M3D_CLIP_visual_features)
-            
+            outputs_softmax = F.softmax(outputs, dim=1)
+
             preds.extend(torch.argmax(outputs, dim=1).cpu().numpy())
             targets.extend(labels.cpu().numpy())
+            val_preds_softmax.extend(torch.max(outputs_softmax, dim=1).values.cpu().numpy())
+            if preds[-1] != targets[-1]:
+                print(file_name)
     print(preds)
+    print(targets)
     acc = accuracy_score(targets, preds)
     print(f"Accuracy: {acc:.4f}")
     print("Classification Report:")
     print(classification_report(targets, preds, digits=4))
-    print("AUC: ", roc_auc_score(targets, preds))
+    print("AUC: ", roc_auc_score(targets, val_preds_softmax))
 
 def load_ViT3D_pretrained_model(pre_trained_model_path, n_classes):
     # Load the pre-trained model checkpoint
@@ -499,29 +509,29 @@ def load_ViT3D_pretrained_model(pre_trained_model_path, n_classes):
 # 主函数
 def main():
     # 数据集路径和标签字典
-    excel_path = '/home/haojing/workplace/MICCAI25/extract_explainable_feats/MRI_dataset_for_MICCAi25.xlsx'
+    excel_path = '/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/MRI_exterenal_dataset_for_MICCAI25.xlsx'
     MRI_excel_info_dict = read_excel_for_MRI_data(excel_path)
     label_dict = {}
     for k, v in MRI_excel_info_dict.items():
         label_dict[k] = int(v['tumour classification']) - 1
 
     # used predicted segmentations
-    train_data_dir = "/home/haojing/workplace/MICCAI25/MRI_data/gland_10_shot/gland_train_pred_by_SAM-Med3D/imagesTr"  # 替换为你的 MRI 数据文件夹路径
-    val_data_dir = "/home/haojing/workplace/MICCAI25/MRI_data/gland_10_shot/gland_test_pred_by_SAM-Med3D/imagesTr"
+    train_data_dir = "/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/external_testset_predmask_29_from_beijing_spacing1.5_last/imagesTr" # 替换为你的 MRI 数据文件夹路径
+    val_data_dir = "/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/external_testset_predmask_29_from_beijing_spacing1.5_last/imagesTr"
     # used gt segmentations
     # train_data_dir = "/home/haojing/workplace/MICCAI25/MRI_data/gland_10_shot/gland_train/imagesTr"  # 替换为你的 MRI 数据文件夹路径
     # val_data_dir = "/home/haojing/workplace/MICCAI25/MRI_data/gland_10_shot/gland_test/imagesTr"
     
     # pre_trained_model_path = '/home/haojing/workplace/MICCAI25/ViT3D_baseline/ViT_B_pretrained_noaug_mae75_BRATS2023_IXI_OASIS3_seed_8456_999_077000.pth.tar'
-    pre_trained_model_path = '/home/haojing/workplace/MICCAI25/ViT3D_ours_M3D_fusion/best_model_lr5e-4_pad5_depth3_AllMRI_acc76.27.pth'
+    pre_trained_model_path = '/home/jinghao/projects/MICCAI25/exp_trained_models/best_model_lr5e-4_predmask_pad5_depth3_GC_Acc76.27.pth'
     
     model = load_ViT3D_pretrained_model(pre_trained_model_path, n_classes=2)
     
     use_M3D_features = True
-    is_only_evaluate=False
+    is_only_evaluate=True
     # for M3D
     if use_M3D_features:
-        M3D_tokenlizer, M3D_CLIP_Model = init_M3D_CLIP_model('/home/haojing/workplace/MICCAI25/M3D/M3D-CLIP')
+        M3D_tokenlizer, M3D_CLIP_Model = init_M3D_CLIP_model('/home/jinghao/projects/MICCAI25/pretrained_models/M3D_CLIP')
     else:
         M3D_CLIP_Model = None
 
@@ -530,7 +540,7 @@ def main():
     model = model.to(device)
     
     # 创建数据加载器
-    train_loader, val_loader = create_dataloaders(train_data_dir, val_data_dir, label_dict, batch_size=8, is_crop=True, padding_size=5)
+    train_loader, val_loader = create_dataloaders(train_data_dir, val_data_dir, label_dict, batch_size=1, is_crop=True, padding_size=15) # padding_size=16 best
     
     if is_only_evaluate:
         evaluate_model(model, M3D_CLIP_Model, val_loader, device)
