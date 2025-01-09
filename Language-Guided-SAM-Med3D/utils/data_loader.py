@@ -17,10 +17,14 @@ def read_excel_for_MRI_data(excel_path):
     result_dict = {}
     # 获取第3、4、5、6列以及倒数第二列的列号
     columns_of_interest = [2, 3, 4, 5, len(df.columns) - 2]  # Python中列索引从0开始
+    # columns_of_interest = [1, 2, 5, 6, -1]  # for external dataset test
     # 遍历第一列的每一行
     for index, row in df.iterrows():
         # 第一列作为key
-        key = row[df.columns[0]].lower()
+        if type(row[df.columns[0]]) == int:
+            key = str(row[df.columns[0]]).zfill(3)
+        else:
+            key = row[df.columns[0]].lower()
         # 创建一个字典来存储指定列的表头和对应的值
         value_dict = {}
         # 遍历感兴趣的列
@@ -45,7 +49,7 @@ class Dataset_Union_ALL(Dataset):
         split_idx=0,
         pcc=False,
         get_all_meta_info=False,
-        text_and_classification_anno_path='/home/haojing/workplace/MICCAI25/extract_explainable_feats/MRI_dataset_for_MICCAi25.xlsx',
+        text_and_classification_anno_path='',
     ):
         self.paths = paths
         self.data_type = data_type
@@ -107,7 +111,6 @@ class Dataset_Union_ALL(Dataset):
 
         if "/ct_" in self.image_paths[index]:
             subject = tio.Clamp(-1000, 1000)(subject)
-
         if self.transform:
             try:
                 subject = self.transform(subject)

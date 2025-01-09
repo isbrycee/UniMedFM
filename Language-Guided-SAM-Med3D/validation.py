@@ -36,6 +36,8 @@ parser.add_argument('-mt', '--model_type', type=str, default='vit_b_ori')
 parser.add_argument('-nc', '--num_clicks', type=int, default=5)
 parser.add_argument('-pm', '--point_method', type=str, default='default')
 parser.add_argument('-dt', '--data_type', type=str, default='Tr')
+parser.add_argument('--excel_path', type=str, default='') # add by bryce
+parser.add_argument('--M3D_CLIP_model_path', type=str, default='') # add by bryce
 
 parser.add_argument('--threshold', type=int, default=0)
 parser.add_argument('--dim', type=int, default=3)
@@ -285,15 +287,13 @@ def finetune_model_predict3D(img3D, gt3D, sam_model_tune, device='cuda', click_m
 
     return pred_list, click_points, click_labels, iou_list, dice_list
 
-        
-
 
 if __name__ == "__main__":    
     # all_dataset_paths = glob(join(args.test_data_path, "*", "*"))
     all_dataset_paths = glob(join(args.test_data_path))
     all_dataset_paths = list(filter(os.path.isdir, all_dataset_paths))
     print("get", len(all_dataset_paths), "datasets")
-
+    
     infer_transform = [
         tio.ToCanonical(),
         tio.CropOrPad(mask_name='label', target_shape=(args.crop_size,args.crop_size,args.crop_size)),
@@ -308,13 +308,14 @@ if __name__ == "__main__":
         split_num=args.split_num,
         split_idx=args.split_idx,
         pcc=False,
+        text_and_classification_anno_path=args.excel_path,
     )
 
     test_dataloader = DataLoader(
         dataset=test_dataset,
         sampler=None,
         batch_size=1, 
-        shuffle=True
+        shuffle=False
     )
 
     checkpoint_path = args.checkpoint_path
@@ -333,7 +334,7 @@ if __name__ == "__main__":
         sam_model_tune = sam_model_registry[args.model_type](args).to(device)
 
     # load M3D model
-    M3D_tokenlizer, M3D_CLIP_Model = init_M3D_CLIP_model("/home/haojing/workplace/MICCAI25/SAM-Med3D-with-ViT3D/M3D/M3D-CLIP")
+    M3D_tokenlizer, M3D_CLIP_Model = init_M3D_CLIP_model(args.M3D_CLIP_model_path)
 
     sam_trans = ResizeLongestSide3D(sam_model_tune.image_encoder.img_size)
 
