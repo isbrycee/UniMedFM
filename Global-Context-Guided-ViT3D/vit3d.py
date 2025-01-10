@@ -765,7 +765,9 @@ class DeiT_Transformer3D(nn.Module):
                 patch_embed_fun='conv3d',
                 weight_init='',
                 training=True,
-                with_dist_token=True
+                with_dist_token=True,
+                use_M3D_CLIP_Image_Feats=False,
+                num_twoway_transformer_layers=2,
                 ):
         super().__init__()
 
@@ -829,7 +831,10 @@ class DeiT_Transformer3D(nn.Module):
         # self.head = nn.Linear(256, n_classes) # add by bryce
 
         # for twoway cross attn with M3D
-        self.twowayCrossAttn = TwoWayCrossAttn(3, 768, 4, 256)
+        if use_M3D_CLIP_Image_Feats:
+            self.twowayCrossAttn = TwoWayCrossAttn(num_twoway_transformer_layers, 768, 4, 256)
+        else:
+            self.twowayCrossAttn = nn.Identity()
 
         self.head = nn.Linear(embed_dim, n_classes) # add by bryce
         trunc_normal_(self.cls_token, std=.02)

@@ -6,7 +6,6 @@ from torch.utils.data import Dataset, DataLoader
 import nibabel as nib
 import numpy as np
 import random
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report, roc_auc_score
 from vit3d import DeiT_Transformer3D
 import pandas as pd
@@ -14,6 +13,8 @@ from scipy.ndimage import zoom
 from transformers import AutoTokenizer, AutoModel
 from collections import Counter
 import torch.nn.functional as F
+import argparse
+
 
 def inverse_weighted_accuracy(y_true, y_pred):
     """
@@ -175,7 +176,7 @@ def read_excel_for_MRI_data(excel_path):
     
     # 获取第3、4、5、6列以及倒数第二列的列号
     columns_of_interest = [2, 3, 4, 5, len(df.columns) - 2]  # Python中列索引从0开始
-    columns_of_interest = [1, 2, 5, 6, -1]  # Python中列索引从0开始
+    # columns_of_interest = [1, 2, 5, 6, -1]  # for external data; TODO, need to fixed
     # 遍历第一列的每一行
     for index, row in df.iterrows():
         # 第一列作为key
@@ -220,7 +221,7 @@ class MRIDataset(Dataset):
         self.label_dict = label_dict
         self.transform = transform
         self.target_size = target_size
-        self.file_names = os.listdir(data_dir)
+        self.file_names = os.listdir(os.path.join(data_dir, 'imagesTr'))
         self.is_crop = is_crop
         self.padding_size = padding_size
         
@@ -230,7 +231,7 @@ class MRIDataset(Dataset):
 
     def __getitem__(self, idx):
         file_name = self.file_names[idx]
-        file_path = os.path.join(self.data_dir, file_name)
+        file_path = os.path.join(self.data_dir, 'imagesTr', file_name)
         file_numbering = file_name.split('.')[0].lower()
         if '_resampled' in file_numbering:
             file_numbering = file_numbering.split('_resampled')[0]
@@ -242,30 +243,32 @@ class MRIDataset(Dataset):
         mask_file_path = file_path.replace('imagesTr', 'labelsTr')
         if 'predmask' in mask_file_path:
             mask_file_path = mask_file_path.split('.nii.gz')[0] + '_pred_best.nii.gz'
-        mask_data = nib.load(mask_file_path).get_fdata()
-        # print(img.shape)
-        # print(mask_data.shape)
-        # 检查图像和标注文件的形状是否一致
-        # if img.shape != mask_data.shape:
-        #     raise ValueError("The shape of the MRI image and the mask must be the same.")
         
+        if '_resampled' in mask_file_path:
+            mask_file_path = mask_file_path.split('_resampled')[0] + '.nii.gz'
+
+        # mask_file_path = mask_file_path.split('labelsTr/')[0] + 'labelsTr/' 'MR_Abd_' + mask_file_path.split('labelsTr/')[1]
+        mask_data = nib.load(mask_file_path).get_fdata()
+
         ########################## Crop ROI ##############################
         # 找到标注为 1 的最小内接长方体的边界
         if self.is_crop:
             padding = self.padding_size
-
             coords = np.array(np.where(mask_data == 1))
-            min_coords = coords.min(axis=1)
-            max_coords = coords.max(axis=1)
-            
-            # 扩展边界
-            min_coords = np.maximum(min_coords - padding, 0)
-            max_coords = np.minimum(max_coords + padding, np.array(img.shape) - 1)
-            
-            # 提取最小内接长方体区域
-            img = img[min_coords[0]:max_coords[0]+1, 
-                                        min_coords[1]:max_coords[1]+1, 
-                                        min_coords[2]:max_coords[2]+1]
+            if len(coords[0]) > 0:
+                min_coords = coords.min(axis=1)
+                max_coords = coords.max(axis=1)
+                
+                # 扩展边界
+                min_coords = np.maximum(min_coords - padding, 0)
+                max_coords = np.minimum(max_coords + padding, np.array(img.shape) - 1)
+                
+                # 提取最小内接长方体区域
+                img = img[min_coords[0]:max_coords[0]+1, 
+                                            min_coords[1]:max_coords[1]+1, 
+                                            min_coords[2]:max_coords[2]+1]
+            else: # for case that no tomour is masked
+                img = initial_img
         #################################################################
         if img.size==0: # in case of no tumour was detected
             img = initial_img
@@ -273,10 +276,9 @@ class MRIDataset(Dataset):
         img = img.astype(np.float32)
         img = (img - np.min(img)) / (np.max(img) - np.min(img) + 1e-8)
         
-        
         target_shape_for_M3D = (256, 256, 32)
         img_for_M3D_CLIP = resize_image(initial_img, target_shape_for_M3D).reshape((1, 32, 256, 256))
-
+        
         # 调整尺寸到 target_size
         img = self.resize(img, self.target_size)
         mask_data = self.resize(mask_data, self.target_size)
@@ -318,27 +320,17 @@ def create_dataloaders(train_data_dir, test_data_dir, label_dict, batch_size=4, 
     Returns:
         train_loader, val_loader: 训练和验证数据加载器
     """
-    # file_names = list(label_dict.keys())
-    # labels = list(label_dict.values())
-
-    # 拆分训练集和测试集
-    # train_files, val_files, train_labels, val_labels = train_test_split(
-    #     file_names, labels, test_size=test_size, stratify=labels, random_state=42
-    # )
-
-    # train_dict = dict(zip(train_files, label_dict))
-    # val_dict = dict(zip(val_files, label_dict))
 
     train_dataset = MRIDataset(train_data_dir, label_dict, is_crop=is_crop, padding_size=padding_size) # padding_size
     val_dataset = MRIDataset(test_data_dir, label_dict, is_crop=is_crop, padding_size=padding_size)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=1)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
 
     return train_loader, val_loader
 
 # 训练函数
-def train_model(model, M3D_CLIP_Model, train_loader, val_loader, device, num_epochs=20, learning_rate=1e-4, save_path="best_model.pth"):
+def train_model(model, M3D_CLIP_Model, train_loader, val_loader, device, num_epochs=20, learning_rate=1e-4, updated_param='head', use_M3D_features=True, save_path="best_model.pth"):
     """
     Args:
         model (torch.nn.Module): 3D 图像分类模型
@@ -350,24 +342,21 @@ def train_model(model, M3D_CLIP_Model, train_loader, val_loader, device, num_epo
     # 定义损失函数
     criterion = nn.CrossEntropyLoss()
     criterion = FocalLoss(alpha=0.25, gamma=2)
-    # optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    optimizer = optim.Adam([
-        # {'params': model.mlp.parameters()},
-        {'params': model.head.parameters()},
-        # {'params': model.proj.parameters()}s,
-        # {'params': model.norm_for_proj.parameters()},
-        ]
-        , lr=learning_rate)
-    # for our M3D fusion
-    # optimizer = optim.Adam([
-    #     {'params': model.twowayCrossAttn.parameters()},
-    #     {'params': model.head.parameters()},
-    #     # {'params': model.proj.parameters()},
-    #     # {'params': model.norm_for_proj.parameters()},
-    #     ]
-    #     , lr=learning_rate)
-
-    print(model.named_parameters())
+    
+    if updated_param == 'all':
+        optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    elif updated_param == 'head':
+        if use_M3D_features:
+            optimizer = optim.Adam([
+                {'params': model.twowayCrossAttn.parameters()},
+                {'params': model.head.parameters()},
+                ]
+                , lr=learning_rate)
+        else:
+            optimizer = optim.Adam([
+                {'params': model.head.parameters()},
+                ]
+                , lr=learning_rate)
    
     best_val_acc = 0.0  # 保存最高验证准确率
 
@@ -378,7 +367,7 @@ def train_model(model, M3D_CLIP_Model, train_loader, val_loader, device, num_epo
         train_preds = []
         train_targets = []
         
-        for imgs, img_for_M3D_CLIP, labels in train_loader:
+        for imgs, img_for_M3D_CLIP, labels, file_name in train_loader:
             imgs, img_for_M3D_CLIP, labels = imgs.to(device), img_for_M3D_CLIP.to(device), labels.to(device)
 
             # for M3D 
@@ -411,7 +400,7 @@ def train_model(model, M3D_CLIP_Model, train_loader, val_loader, device, num_epo
         val_preds_softmax = []
         
         with torch.no_grad():
-            for imgs, img_for_M3D_CLIP, labels in val_loader:
+            for imgs, img_for_M3D_CLIP, labels, file_name in val_loader:
                 imgs, img_for_M3D_CLIP, labels = imgs.to(device), img_for_M3D_CLIP.to(device), labels.to(device)
                 if M3D_CLIP_Model:
                     M3D_CLIP_visual_features = M3D_CLIP_Model.encode_image(img_for_M3D_CLIP)[:, 0] # (bs, 768)
@@ -443,7 +432,6 @@ def train_model(model, M3D_CLIP_Model, train_loader, val_loader, device, num_epo
         print(f"Epoch [{epoch+1}/{num_epochs}] "
               f"Train Loss: {train_loss/len(train_loader):.4f} Train Acc: {train_acc:.4f} "
               f"Val Loss: {val_loss/len(val_loader):.4f} Val Acc: {val_acc:.4f} Val AUC: {auc:.4f} ")
-        
 
 # 评估函数
 def evaluate_model(model, M3D_CLIP_Model, data_loader, device):
@@ -461,8 +449,10 @@ def evaluate_model(model, M3D_CLIP_Model, data_loader, device):
     with torch.no_grad():
         for imgs, img_for_M3D_CLIP, labels, file_name in data_loader:
             imgs, img_for_M3D_CLIP, labels = imgs.to(device), img_for_M3D_CLIP.to(device), labels.to(device)
-            M3D_CLIP_visual_features = M3D_CLIP_Model.encode_image(img_for_M3D_CLIP)[:, 0] # (bs, 768)
-
+            if M3D_CLIP_Model:
+                M3D_CLIP_visual_features = M3D_CLIP_Model.encode_image(img_for_M3D_CLIP)[:, 0] # (bs, 768)
+            else:
+                M3D_CLIP_visual_features = None
             # 前向传播
             outputs = model(imgs, M3D_CLIP_visual_features)
             outputs_softmax = F.softmax(outputs, dim=1)
@@ -480,7 +470,7 @@ def evaluate_model(model, M3D_CLIP_Model, data_loader, device):
     print(classification_report(targets, preds, digits=4))
     print("AUC: ", roc_auc_score(targets, val_preds_softmax))
 
-def load_ViT3D_pretrained_model(pre_trained_model_path, n_classes):
+def load_ViT3D_pretrained_model(pre_trained_model_path, n_classes, use_M3D_features=True):
     # Load the pre-trained model checkpoint
     checkpoint = torch.load(pre_trained_model_path, map_location='cpu')
     print("Loaded pre-trained checkpoint from: %s" % pre_trained_model_path)
@@ -493,7 +483,7 @@ def load_ViT3D_pretrained_model(pre_trained_model_path, n_classes):
         checkpoint_model = checkpoint['net']
     
     # Load the state dict into your model
-    model = DeiT_Transformer3D(img_size=(128, 128, 128), n_classes=n_classes, with_dist_token=False)  # replace YourModel with your actual model class
+    model = DeiT_Transformer3D(img_size=(128, 128, 128), n_classes=n_classes, with_dist_token=False, use_M3D_CLIP_Image_Feats=use_M3D_features)  # replace YourModel with your actual model class
     msg = model.load_state_dict(checkpoint_model, strict=False)
 
     print("Successfully Loaded pre-trained checkpoint from: %s" % pre_trained_model_path)
@@ -506,52 +496,83 @@ def load_ViT3D_pretrained_model(pre_trained_model_path, n_classes):
 
     return model
 
-# 主函数
-def main():
+def main(args):
     # 数据集路径和标签字典
-    excel_path = '/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/MRI_exterenal_dataset_for_MICCAI25.xlsx'
-    MRI_excel_info_dict = read_excel_for_MRI_data(excel_path)
+    MRI_excel_info_dict = read_excel_for_MRI_data(args.excel_path)
     label_dict = {}
     for k, v in MRI_excel_info_dict.items():
         label_dict[k] = int(v['tumour classification']) - 1
+    # 加载预训练模型
+    model = load_ViT3D_pretrained_model(args.pre_trained_model_path, n_classes=2, use_M3D_features=args.use_M3D_features)
 
-    # used predicted segmentations
-    train_data_dir = "/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/external_testset_predmask_29_from_beijing_spacing1.5_last/imagesTr" # 替换为你的 MRI 数据文件夹路径
-    val_data_dir = "/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/external_testset_predmask_29_from_beijing_spacing1.5_last/imagesTr"
-    # used gt segmentations
-    # train_data_dir = "/home/haojing/workplace/MICCAI25/MRI_data/gland_10_shot/gland_train/imagesTr"  # 替换为你的 MRI 数据文件夹路径
-    # val_data_dir = "/home/haojing/workplace/MICCAI25/MRI_data/gland_10_shot/gland_test/imagesTr"
-    
-    # pre_trained_model_path = '/home/haojing/workplace/MICCAI25/ViT3D_baseline/ViT_B_pretrained_noaug_mae75_BRATS2023_IXI_OASIS3_seed_8456_999_077000.pth.tar'
-    pre_trained_model_path = '/home/jinghao/projects/MICCAI25/exp_trained_models/best_model_lr5e-4_predmask_pad5_depth3_GC_Acc76.27.pth'
-    
-    model = load_ViT3D_pretrained_model(pre_trained_model_path, n_classes=2)
-    
-    use_M3D_features = True
-    is_only_evaluate=True
-    # for M3D
-    if use_M3D_features:
-        M3D_tokenlizer, M3D_CLIP_Model = init_M3D_CLIP_model('/home/jinghao/projects/MICCAI25/pretrained_models/M3D_CLIP')
+    # 初始化 M3D 模型
+    if args.use_M3D_features and args.M3D_CLIP_model_path is not None:
+        M3D_tokenlizer, M3D_CLIP_Model = init_M3D_CLIP_model(args.M3D_CLIP_model_path)
     else:
         M3D_CLIP_Model = None
 
     # 检测设备
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
-    
+
     # 创建数据加载器
-    train_loader, val_loader = create_dataloaders(train_data_dir, val_data_dir, label_dict, batch_size=1, is_crop=True, padding_size=15) # padding_size=16 best
-    
-    if is_only_evaluate:
+    train_loader, val_loader = create_dataloaders(
+        args.train_data_dir,
+        args.val_data_dir,
+        label_dict,
+        batch_size=args.batch_size,
+        is_crop=args.is_crop,
+        padding_size=args.padding_size
+    )
+
+    if args.is_only_evaluate:
         evaluate_model(model, M3D_CLIP_Model, val_loader, device)
         return
-    
+
     # 训练模型
-    train_model(model, M3D_CLIP_Model, train_loader, val_loader, device, num_epochs=40, learning_rate=5e-4, save_path="test.pth")
+    train_model(
+        model,
+        M3D_CLIP_Model,
+        train_loader,
+        val_loader,
+        device,
+        num_epochs=args.num_epochs,
+        learning_rate=args.learning_rate,
+        updated_param=args.updated_param,
+        use_M3D_features=args.use_M3D_features,
+        save_path=args.save_path,
+    )
 
     # 测试模型
     print("Evaluating model on validation set:")
     evaluate_model(model, M3D_CLIP_Model, val_loader, device)
 
+
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="3D MRI Model Training and Evaluation")
+
+    # 数据集相关参数
+    parser.add_argument("--excel_path", type=str, required=True, help="Path to the Excel file containing MRI data info")
+    parser.add_argument("--train_data_dir", type=str, required=True, help="Path to the training data directory")
+    parser.add_argument("--val_data_dir", type=str, required=True, help="Path to the validation data directory")
+    
+    # 模型相关参数
+    parser.add_argument("--pre_trained_model_path", type=str, required=True, help="Path to the pre-trained model file")
+    parser.add_argument("--M3D_CLIP_model_path", type=str, default=None, help="Path to the M3D CLIP model directory")
+    parser.add_argument("--num_twoway_transformer_layers", type=int, default=2, help="Number of Twoway Transformer Layers")
+
+    # 训练相关参数
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for data loaders")
+    parser.add_argument("--padding_size", type=int, default=5, help="Padding size for data cropping")
+    parser.add_argument("--num_epochs", type=int, default=40, help="Number of training epochs")
+    parser.add_argument("--learning_rate", type=float, default=5e-4, help="Learning rate for optimizer")
+    parser.add_argument("--save_path", type=str, default="test.pth", help="Path to save the trained model")
+    parser.add_argument("--updated_param", type=str, default="head", help="updated parameters")
+
+    # 模式选择参数
+    parser.add_argument("--is_crop", action="store_true", help="Whether to crop the input data")
+    parser.add_argument("--use_M3D_features", action="store_true", help="Whether to use M3D features")
+    parser.add_argument("--is_only_evaluate", action="store_true", help="Whether to only evaluate the model")
+
+    args = parser.parse_args()
+    main(args)
