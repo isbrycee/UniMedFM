@@ -241,14 +241,21 @@ class MRIDataset(Dataset):
         img = nib.load(file_path).get_fdata()
         initial_img = img
         mask_file_path = file_path.replace('imagesTr', 'labelsTr')
-        if 'predmask' in mask_file_path:
+        if 'comparisons_seg_res' in mask_file_path:
             mask_file_path = mask_file_path.split('.nii.gz')[0] + '_pred_best.nii.gz'
         
-        if '_resampled' in mask_file_path:
-            mask_file_path = mask_file_path.split('_resampled')[0] + '.nii.gz'
+        # if '_resampled' in mask_file_path:
+        #     mask_file_path = mask_file_path.split('_resampled')[0] + '.nii.gz'
 
         # mask_file_path = mask_file_path.split('labelsTr/')[0] + 'labelsTr/' 'MR_Abd_' + mask_file_path.split('labelsTr/')[1]
+        
+        if 'T-Mamba' in mask_file_path:
+            mask_file_path = mask_file_path.split('.nii.gz')[0] + '_segmentation.nii.gz'
+
         mask_data = nib.load(mask_file_path).get_fdata()
+        
+        # if img.shape != mask_data.shape:
+        #     mask_data = self.resize(mask_data, img.shape)
 
         ########################## Crop ROI ##############################
         # 找到标注为 1 的最小内接长方体的边界
@@ -265,12 +272,12 @@ class MRIDataset(Dataset):
                 
                 # 提取最小内接长方体区域
                 img = img[min_coords[0]:max_coords[0]+1, 
-                                            min_coords[1]:max_coords[1]+1, 
+                                            min_coords[1]:max_coords[1]+1,
                                             min_coords[2]:max_coords[2]+1]
             else: # for case that no tomour is masked
                 img = initial_img
         #################################################################
-        if img.size==0: # in case of no tumour was detected
+        if img.size == 0: # in case of no tumour was detected
             img = initial_img
         # # 转换为 float32 并归一化
         img = img.astype(np.float32)
