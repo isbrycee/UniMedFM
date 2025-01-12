@@ -1,9 +1,9 @@
 img_datas = [
-'/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/external_testset_29_from_beijing',
+'/home/jinghao/projects/MICCAI25/dataset_gland_MRI_10_shot/gland_train',
 # '/home/haojing/workspace/MICCAI25/MRI_data/gland_test',
 ]
 img_datas_val = [
-'/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/external_testset_29_from_beijing',
+'/home/jinghao/projects/MICCAI25/dataset_gland_MRI_10_shot/gland_test',
 ]
 all_classes = [
 'COVID_lesion',

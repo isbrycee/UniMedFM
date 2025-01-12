@@ -165,6 +165,8 @@ class Dataset_Union_ALL(Dataset):
             return (
                 subject.image.data.clone().detach(),
                 subject.label.data.clone().detach(),
+                torch.tensor(label, dtype=torch.long),
+                text,
                 meta_info,
             )
         else:

@@ -41,16 +41,19 @@ parser.add_argument('--click_type', type=str, default='random')
 parser.add_argument('--multi_click', action='store_true', default=False)
 parser.add_argument('--model_type', type=str, default='vit_b_ori')
 parser.add_argument('--checkpoint', type=str, default='ckpt/sam_med3d.pth')
-parser.add_argument('--device', type=str, default='cuda')
+parser.add_argument('--device', type=str, default='cuda:0')
 parser.add_argument('--work_dir', type=str, default='work_dir')
 
 # train
 parser.add_argument('--num_workers', type=int, default=0)
-parser.add_argument('--gpu_ids', type=int, nargs='+', default=[1])
+parser.add_argument('--gpu_ids', type=int, nargs='+', default=[0])
 parser.add_argument('--multi_gpu', action='store_true', default=False)
 parser.add_argument('--resume', action='store_true', default=False)
 parser.add_argument('--allow_partial_weight', action='store_true', default=False)
-parser.add_argument('--is_train_ViT3D', type=bool, default=False)
+parser.add_argument('--is_train_ViT3D', type=bool, default=False) # add by bryce
+parser.add_argument("--use_text_features", action="store_true", help="Whether to use M3D features") # add by bryce
+parser.add_argument('--excel_path', type=str, default='') # add by bryce
+parser.add_argument('--M3D_CLIP_model_path', type=str, default='') # add by bryce
 
 # lr_scheduler
 parser.add_argument('--lr_scheduler', type=str, default='multisteplr')
@@ -86,7 +89,7 @@ MODEL_SAVE_PATH = join(args.work_dir, args.task_name)
 os.makedirs(MODEL_SAVE_PATH, exist_ok=True)
 
 def build_model(args):
-    sam_model = sam_model_registry3D[args.model_type](checkpoint=None).to(device)
+    sam_model = sam_model_registry3D[args.model_type](checkpoint=None, use_text_features=args.use_text_features).to(device)
     if args.multi_gpu:
         sam_model = DDP(sam_model, device_ids=[args.rank], output_device=args.rank)
     return sam_model
@@ -98,7 +101,8 @@ def get_dataloaders(args):
         tio.CropOrPad(mask_name='label', target_shape=(args.img_size,args.img_size,args.img_size)), # crop only object region
         tio.RandomFlip(axes=(0, 1, 2)),
     ]),
-    threshold=1000)
+    threshold=1000,
+    text_and_classification_anno_path=args.excel_path)
     
     if args.multi_gpu:
         train_sampler = DistributedSampler(train_dataset)
@@ -137,6 +141,7 @@ def get_dataloaders_val(args):
         split_num=args.split_num,
         split_idx=args.split_idx,
         pcc=False,
+        text_and_classification_anno_path=args.excel_path,
     )
 
     test_dataloader = DataLoader(
@@ -186,12 +191,9 @@ class BaseTrainer:
             sam_model = self.model
 
         self.optimizer = torch.optim.AdamW([
-            {'params': sam_model.image_encoder.parameters(), 'lr': self.args.lr * 0.1}, # , 'lr': self.args.lr * 0.1},
+            # {'params': sam_model.image_encoder.parameters(), 'lr': self.args.lr * 0.1}, # , 'lr': self.args.lr * 0.1},
             {'params': sam_model.prompt_encoder.parameters() , 'lr': self.args.lr * 0.1},
             {'params': sam_model.mask_decoder.parameters(), 'lr': self.args.lr * 0.1},
-            # {'params': self.model_ViT3D.parameters(), 'lr': self.args.lr * 1},
-            # {'params': self.model_ViT3D.head.parameters(), 'lr': self.args.lr * 1},
-            # {'params': self.model_ViT3D.mlp.parameters(), 'lr': self.args.lr * 1},
         ], lr=self.args.lr, betas=(0.9,0.999), weight_decay=self.args.weight_decay)
 
     def set_lr_scheduler(self):
@@ -422,10 +424,13 @@ class BaseTrainer:
                 with amp.autocast():
                     image_embedding = sam_model.image_encoder(image3D)
                     # add by bryce; for text embedding
-                    text_embeddings = self.M3D_tokenlizer(text, max_length=512, truncation=True, padding="max_length", return_tensors="pt")
-                    text_input_id = text_embeddings["input_ids"].to(device=device)
-                    attention_mask_benign = text_embeddings["attention_mask"].to(device=device)
-                    text_benign_features = self.M3D_CLIP_Model.encode_text(text_input_id, attention_mask_benign)[:, 0]
+                    if self.M3D_tokenlizer and self.M3D_CLIP_Model:
+                        text_embeddings = self.M3D_tokenlizer(text, max_length=512, truncation=True, padding="max_length", return_tensors="pt")
+                        text_input_id = text_embeddings["input_ids"].to(device=device)
+                        attention_mask_benign = text_embeddings["attention_mask"].to(device=device)
+                        text_benign_features = self.M3D_CLIP_Model.encode_text(text_input_id, attention_mask_benign)[:, 0]
+                    else:
+                        text_benign_features = None
 
                     self.click_points = []
                     self.click_labels = []
@@ -496,7 +501,7 @@ class BaseTrainer:
         epoch_loss = 0
         epoch_iou = 0
         self.model.eval()
-        self.model_ViT3D.eval()
+        # self.model_ViT3D.eval()
         if self.args.multi_gpu:
             sam_model = self.model.module
         else:
@@ -525,10 +530,13 @@ class BaseTrainer:
                 image3D = self.norm_transform(image3D.squeeze(dim=1)) # (N, C, W, H, D)
                 image3D = image3D.unsqueeze(dim=1)
                 # add by bryce; for text embedding
-                text_embeddings = self.M3D_tokenlizer(text, max_length=512, truncation=True, padding="max_length", return_tensors="pt")
-                text_input_id = text_embeddings["input_ids"].to(device=device)
-                attention_mask_benign = text_embeddings["attention_mask"].to(device=device)
-                text_benign_features = self.M3D_CLIP_Model.encode_text(text_input_id, attention_mask_benign)[:, 0]
+                if self.args.use_text_features:
+                    text_embeddings = self.M3D_tokenlizer(text, max_length=512, truncation=True, padding="max_length", return_tensors="pt")
+                    text_input_id = text_embeddings["input_ids"].to(device=device)
+                    attention_mask_benign = text_embeddings["attention_mask"].to(device=device)
+                    text_benign_features = self.M3D_CLIP_Model.encode_text(text_input_id, attention_mask_benign)[:, 0]
+                else:
+                    text_benign_features = None
                 image3D = image3D.to(device) # torch.Size([4, 1, 128, 128, 128])
                 gt3D = gt3D.to(device).type(torch.long) # torch.Size([4, 1, 128, 128, 128])
                 with torch.no_grad():
@@ -609,7 +617,7 @@ class BaseTrainer:
             if self.args.multi_gpu:
                 dist.barrier()
                 self.dataloaders.sampler.set_epoch(epoch)
-            num_clicks = np.random.randint(1, 11)
+            num_clicks = np.random.randint(1, 21)
             epoch_loss, epoch_iou, epoch_dice, pred_list, epoch_acc = self.train_epoch(epoch, num_clicks)
 
             if self.lr_scheduler is not None:
@@ -622,7 +630,7 @@ class BaseTrainer:
                 self.dices.append(epoch_dice)
                 print(f'EPOCH: {epoch}, Loss: {epoch_loss}')
                 print(f'EPOCH: {epoch}, Dice: {epoch_dice}')
-                print(f'EPOCH: {epoch}, Acc: {epoch_acc}')
+                # print(f'EPOCH: {epoch}, Acc: {epoch_acc}')
                 logger.info(f'Epoch\t {epoch}\t : loss: {epoch_loss}, dice: {epoch_dice}, Acc: {epoch_acc}')
 
                 if self.args.multi_gpu:
@@ -665,7 +673,7 @@ class BaseTrainer:
                     print("=============== valid ===============")
                     print(f'EPOCH: {epoch}, Loss: {epoch_loss}')
                     print(f'EPOCH: {epoch}, Dice: {epoch_dice}')
-                    print(f'EPOCH: {epoch}, Acc: {epoch_acc}')
+                    # print(f'EPOCH: {epoch}, Acc: {epoch_acc}')
                     print(f'Best dice: {self.best_dice}')
                     print("============= valid  End==============")
 
@@ -729,10 +737,13 @@ def main():
         model = build_model(args)
 
         # add by bryce 
-        ViT3D_pre_trained_model_path = '/home/haojing/workplace/MICCAI25/ViT3D_baseline/ViT_B_pretrained_noaug_mae75_BRATS2023_IXI_OASIS3_seed_8456_999_077000.pth.tar'
-        model_ViT3D = load_ViT3D_pretrained_model(ViT3D_pre_trained_model_path, n_classes=2)
-        M3D_tokenlizer, M3D_CLIP_Model = init_M3D_CLIP_model("/home/haojing/workplace/MICCAI25/SAM-Med3D-with-ViT3D/M3D/M3D-CLIP")
-        
+        # ViT3D_pre_trained_model_path = '/home/haojing/workplace/MICCAI25/ViT3D_baseline/ViT_B_pretrained_noaug_mae75_BRATS2023_IXI_OASIS3_seed_8456_999_077000.pth.tar'
+        # model_ViT3D = load_ViT3D_pretrained_model(ViT3D_pre_trained_model_path, n_classes=2)
+        model_ViT3D = None
+        if args.use_text_features:
+            M3D_tokenlizer, M3D_CLIP_Model = init_M3D_CLIP_model(args.M3D_CLIP_model_path)
+        else:
+            M3D_tokenlizer, M3D_CLIP_Model = None, None
         
         # Create trainer
         trainer = BaseTrainer(model, model_ViT3D, M3D_tokenlizer, M3D_CLIP_Model, dataloaders, dataloaders_val, args)

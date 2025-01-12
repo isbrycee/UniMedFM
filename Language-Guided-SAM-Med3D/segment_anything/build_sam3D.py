@@ -43,12 +43,13 @@ def build_sam3D_vit_b(checkpoint=None):
         checkpoint=checkpoint,
     )
 
-def build_sam3D_vit_b_ori(checkpoint=None):
+def build_sam3D_vit_b_ori(checkpoint=None, use_text_features=True):
     return _build_sam3D_ori(
         encoder_embed_dim=768,
         encoder_depth=12,
         encoder_num_heads=12,
         encoder_global_attn_indexes=[2, 5, 8, 11],
+        use_text_features=use_text_features,
         checkpoint=checkpoint,
     )
 
@@ -117,6 +118,7 @@ def _build_sam3D_ori(
     encoder_depth,
     encoder_num_heads,
     encoder_global_attn_indexes,
+    use_text_features, # add by bryce
     checkpoint=None,
 ):
     prompt_embed_dim = 384
@@ -149,6 +151,7 @@ def _build_sam3D_ori(
             transformer_dim=prompt_embed_dim,
             iou_head_depth=3,
             iou_head_hidden_dim=256,
+            use_text_features=use_text_features,
         ),
         pixel_mean=[123.675, 116.28, 103.53],
         pixel_std=[58.395, 57.12, 57.375],

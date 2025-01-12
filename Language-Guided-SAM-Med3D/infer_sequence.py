@@ -45,7 +45,7 @@ parser.add_argument("--skip_existing_pred", action="store_true", default=False)
 parser.add_argument("--save_image", action="store_true", default=True)
 parser.add_argument("--sliding_window", action="store_true", default=False)
 
-parser.add_argument("--image_size", type=int, default=256)
+parser.add_argument("--image_size", type=int, default=128)
 parser.add_argument("--crop_size", type=int, default=128)
 parser.add_argument("--device", type=str, default="cuda")
 parser.add_argument("-mt", "--model_type", type=str, default="vit_b_ori")

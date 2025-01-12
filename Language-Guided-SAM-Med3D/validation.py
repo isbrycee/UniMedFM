@@ -38,6 +38,7 @@ parser.add_argument('-pm', '--point_method', type=str, default='default')
 parser.add_argument('-dt', '--data_type', type=str, default='Tr')
 parser.add_argument('--excel_path', type=str, default='') # add by bryce
 parser.add_argument('--M3D_CLIP_model_path', type=str, default='') # add by bryce
+parser.add_argument("--use_text_features", action="store_true", help="Whether to use M3D features") # add by bryce
 
 parser.add_argument('--threshold', type=int, default=0)
 parser.add_argument('--dim', type=int, default=3)
@@ -324,7 +325,7 @@ if __name__ == "__main__":
     print("device:", device)
 
     if(args.dim==3):
-        sam_model_tune = sam_model_registry3D[args.model_type](checkpoint=None).to(device)
+        sam_model_tune = sam_model_registry3D[args.model_type](checkpoint=None, use_text_features=args.use_text_features).to(device)
         if checkpoint_path is not None:
             model_dict = torch.load(checkpoint_path, map_location=device)
             state_dict = model_dict['model_state_dict']
@@ -334,7 +335,10 @@ if __name__ == "__main__":
         sam_model_tune = sam_model_registry[args.model_type](args).to(device)
 
     # load M3D model
-    M3D_tokenlizer, M3D_CLIP_Model = init_M3D_CLIP_model(args.M3D_CLIP_model_path)
+    if args.use_text_features:
+        M3D_tokenlizer, M3D_CLIP_Model = init_M3D_CLIP_model(args.M3D_CLIP_model_path)
+    else:
+        M3D_tokenlizer, M3D_CLIP_Model = None, None
 
     sam_trans = ResizeLongestSide3D(sam_model_tune.image_encoder.img_size)
 
@@ -347,12 +351,14 @@ if __name__ == "__main__":
     for batch_data in tqdm(test_dataloader):
         
         image3D, gt3D, img_name, binary_label, text = batch_data
-
-        text_embeddings = M3D_tokenlizer(text, max_length=512, truncation=True, padding="max_length", return_tensors="pt")
-        text_input_id = text_embeddings["input_ids"].to(device=device)
-        attention_mask_benign = text_embeddings["attention_mask"].to(device=device)
-        text_features = M3D_CLIP_Model.encode_text(text_input_id, attention_mask_benign)[:, 0]
-        
+        if M3D_tokenlizer:
+            text_embeddings = M3D_tokenlizer(text, max_length=512, truncation=True, padding="max_length", return_tensors="pt")
+            text_input_id = text_embeddings["input_ids"].to(device=device)
+            attention_mask_benign = text_embeddings["attention_mask"].to(device=device)
+            text_features = M3D_CLIP_Model.encode_text(text_input_id, attention_mask_benign)[:, 0]
+        else:
+            text_embeddings, text_features = None, None
+    
         sz = image3D.size()
         if(sz[2]<args.crop_size or sz[3]<args.crop_size or sz[4]<args.crop_size):
             print("[ERROR] wrong size", sz, "for", img_name)

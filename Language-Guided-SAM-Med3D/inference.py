@@ -21,6 +21,7 @@ import pickle
 from utils.click_method import get_next_click3D_torch_ritm, get_next_click3D_torch_2
 from utils.data_loader import Dataset_Union_ALL_Val
 from itertools import product
+from M3D.load_M3D_model import init_M3D_CLIP_model
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-tdp', '--test_data_path', type=str, default='./data/validation')
@@ -30,6 +31,10 @@ parser.add_argument('--task_name', type=str, default='test_amos')
 parser.add_argument('--skip_existing_pred', action='store_true', default=False)
 parser.add_argument('--save_image_and_gt', action='store_true', default=False)
 parser.add_argument('--sliding_window', action='store_true', default=False)
+parser.add_argument('--is_train_ViT3D', type=bool, default=False) # add by bryce
+parser.add_argument("--use_text_features", action="store_true", help="Whether to use M3D features") # add by bryce
+parser.add_argument('--excel_path', type=str, default='') # add by bryce
+parser.add_argument('--M3D_CLIP_model_path', type=str, default='') # add by bryce
 
 parser.add_argument('--image_size', type=int, default=256)
 parser.add_argument('--crop_size', type=int, default=128)
@@ -231,7 +236,7 @@ def finetune_model_predict2D(img3D, gt3D, sam_model_tune, target_size=256, click
     return pred_list, click_points, click_labels
 
 
-def finetune_model_predict3D(img3D, gt3D, sam_model_tune, device='cuda', click_method='random', num_clicks=10, prev_masks=None):
+def finetune_model_predict3D(img3D, gt3D, sam_model_tune, device='cuda', click_method='random', num_clicks=10, prev_masks=None, text_embed=None):
     img3D = norm_transform(img3D.squeeze(dim=1)) # (N, C, W, H, D)
     img3D = img3D.unsqueeze(dim=1)
 
@@ -273,6 +278,7 @@ def finetune_model_predict3D(img3D, gt3D, sam_model_tune, device='cuda', click_m
                 sparse_prompt_embeddings=sparse_embeddings, # (B, 2, 384)
                 dense_prompt_embeddings=dense_embeddings, # (B, 384, 64, 64, 64)
                 multimask_output=False,
+                text_embed=text_embed,
                 )
             prev_masks = F.interpolate(low_res_masks, size=gt3D.shape[-3:], mode='trilinear', align_corners=False)
 
@@ -381,7 +387,8 @@ def save_numpy_to_nifti(in_arr: np.array, out_path, meta_info):
 
 
 if __name__ == "__main__":    
-    all_dataset_paths = glob(join(args.test_data_path, "*", "*"))
+    # all_dataset_paths = glob(join(args.test_data_path, "*", "*"))
+    all_dataset_paths = glob(join(args.test_data_path))
     all_dataset_paths = list(filter(osp.isdir, all_dataset_paths))
     print("get", len(all_dataset_paths), "datasets")
 
@@ -403,8 +410,9 @@ if __name__ == "__main__":
         split_idx=args.split_idx,
         pcc=False,
         get_all_meta_info=True,
+        text_and_classification_anno_path=args.excel_path,
     )
-
+    
     test_dataloader = DataLoader(
         dataset=test_dataset,
         sampler=None,
@@ -417,8 +425,14 @@ if __name__ == "__main__":
     device = args.device
     print("device:", device)
 
+# load M3D model
+    if args.use_text_features:
+        M3D_tokenlizer, M3D_CLIP_Model = init_M3D_CLIP_model(args.M3D_CLIP_model_path)
+    else:
+        M3D_tokenlizer, M3D_CLIP_Model = None, None
+
     if(args.dim==3):
-        sam_model_tune = sam_model_registry3D[args.model_type](checkpoint=None).to(device)
+        sam_model_tune = sam_model_registry3D[args.model_type](checkpoint=None, use_text_features=args.use_text_features).to(device)
         if checkpoint_path is not None:
             model_dict = torch.load(checkpoint_path, map_location=device)
             state_dict = model_dict['model_state_dict']
@@ -436,8 +450,16 @@ if __name__ == "__main__":
     out_dice_all = OrderedDict()
 
     for batch_data in tqdm(test_dataloader):
-        image3D, gt3D, meta_info = batch_data
+        image3D, gt3D, binary_label, text, meta_info = batch_data
         img_name = meta_info["image_path"][0]
+
+        if M3D_tokenlizer:
+            text_embeddings = M3D_tokenlizer(text, max_length=512, truncation=True, padding="max_length", return_tensors="pt")
+            text_input_id = text_embeddings["input_ids"].to(device=device)
+            attention_mask_benign = text_embeddings["attention_mask"].to(device=device)
+            text_features = M3D_CLIP_Model.encode_text(text_input_id, attention_mask_benign)[:, 0]
+        else:
+            text_embeddings, text_features = None, None
 
         modality = osp.basename(osp.dirname(osp.dirname(osp.dirname(img_name))))
         dataset = osp.basename(osp.dirname(osp.dirname(img_name)))
@@ -457,7 +479,7 @@ if __name__ == "__main__":
                 seg_mask_list, points, labels = finetune_model_predict3D(
                     image3D, gt3D, sam_model_tune, device=device, 
                     click_method=args.point_method, num_clicks=args.num_clicks, 
-                    prev_masks=None)
+                    prev_masks=None, text_embed=text_features)
                 ori_roi, pred_roi = pos3D["ori_roi"], pos3D["pred_roi"]
                 for idx, seg_mask in enumerate(seg_mask_list):
                     seg_mask_roi = seg_mask[..., pred_roi[0]:pred_roi[1], pred_roi[2]:pred_roi[3], pred_roi[4]:pred_roi[5]]
@@ -480,11 +502,11 @@ if __name__ == "__main__":
                 save_numpy_to_nifti(gt3D_full, osp.join(vis_root, osp.basename(img_name).replace(".nii.gz", f"_gt.nii.gz")), meta_info)
             for idx, pred3D_full in pred3D_full_dict.items():
                 save_numpy_to_nifti(pred3D_full, osp.join(vis_root, osp.basename(img_name).replace(".nii.gz", f"_pred{idx}.nii.gz")), meta_info)
-                radius = 2
-                for pt in points[:idx+1]:
-                    pred3D_full[..., pt[0,0,0]-radius:pt[0,0,0]+radius, pt[0,0,1]-radius:pt[0,0,1]+radius, pt[0,0,2]-radius:pt[0,0,2]+radius] = 10
-                save_numpy_to_nifti(pred3D_full, osp.join(vis_root, osp.basename(img_name).replace(".nii.gz", f"_pred{idx}_wPt.nii.gz")), meta_info)
-                
+                # radius = 2
+                # for pt in points[:idx+1]:
+                #     pred3D_full[..., pt[0,0,0]-radius:pt[0,0,0]+radius, pt[0,0,1]-radius:pt[0,0,1]+radius, pt[0,0,2]-radius:pt[0,0,2]+radius] = 10
+                # save_numpy_to_nifti(pred3D_full, osp.join(vis_root, osp.basename(img_name).replace(".nii.gz", f"_pred{idx}_wPt.nii.gz")), meta_info)
+    
         ''' metric computation '''
         for click_idx in range(args.num_clicks):
             reorient_tensor = lambda in_arr : np.transpose(in_arr.squeeze().detach().cpu().numpy(), (2, 1, 0))
@@ -492,6 +514,11 @@ if __name__ == "__main__":
             medsam_seg = sitk.GetArrayFromImage(sitk.ReadImage(curr_pred_path))
             iou_list.append(round(compute_iou(medsam_seg, reorient_tensor(gt3D_full)), 4))
             dice_list.append(round(compute_dice(reorient_tensor(gt3D_full), medsam_seg), 4))
+
+        # add by bryce; for save best
+        best_id = dice_list.index(max(dice_list))
+        os.makedirs(os.path.join(vis_root, 'best'), exist_ok=True)
+        save_numpy_to_nifti(pred3D_full_dict[best_id], osp.join(vis_root + '/best/', osp.basename(img_name).replace(".nii.gz", f"_pred_best.nii.gz")), meta_info)
 
         per_iou = max(iou_list)
         all_iou_list.append(per_iou)

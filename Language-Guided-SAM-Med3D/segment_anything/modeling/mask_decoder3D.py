@@ -38,7 +38,6 @@ class LoRALayer(torch.nn.Module):
     def forward(self, x, text_embed):
         x_A = x @ self.A
         text_embed_proj = self.norm(self.text_embed_proj(text_embed))
-        # import pdb; pdb.set_trace()
         attn_output, attn_output_weights = self.cross_attn(x_A.transpose(0,1), self.proj_k(text_embed_proj).unsqueeze(0), self.proj_v(text_embed_proj).unsqueeze(0))
         x = self.alpha * (attn_output.transpose(0,1) @ self.B)
         return x
@@ -67,6 +66,7 @@ class TwoWayTransformer3D(nn.Module):
         mlp_dim: int,
         activation: Type[nn.Module] = nn.ReLU,
         attention_downsample_rate: int = 2,
+        use_text_features: bool=True,
     ) -> None:
         """
         A transformer decoder that attends to an input image using
@@ -103,9 +103,13 @@ class TwoWayTransformer3D(nn.Module):
             embedding_dim, num_heads, downsample_rate=attention_downsample_rate
         )
         self.norm_final_attn = nn.LayerNorm(embedding_dim)
+
         # add by bryce
-        self.lora_k = LoRALayer(embedding_dim, embedding_dim, 64, 0.25)
-        self.lora_q = LoRALayer(embedding_dim, embedding_dim, 64, 0.25)
+        if use_text_features:
+            self.lora_k = LoRALayer(embedding_dim, embedding_dim, 64, 0.25)
+            self.lora_q = LoRALayer(embedding_dim, embedding_dim, 64, 0.25)
+        else:
+            self.lora_k, self.lora_q = None, None
 
     def forward(
         self,
@@ -151,8 +155,9 @@ class TwoWayTransformer3D(nn.Module):
         k = keys + image_pe
 
         # add by bryce
-        q = self.lora_q(q, text_embed)
-        k = self.lora_k(k, text_embed)
+        if text_embed is not None and self.lora_k and self.lora_q:
+            q = self.lora_q(q, text_embed)
+            k = self.lora_k(k, text_embed)
 
         attn_out = self.final_attn_token_to_image(q=q, k=k, v=keys)
         queries = queries + attn_out
@@ -329,6 +334,7 @@ class MaskDecoder3D(nn.Module):
         activation: Type[nn.Module] = nn.GELU,
         iou_head_depth: int = 3,
         iou_head_hidden_dim: int = 256,
+        use_text_features: bool = True,
     ) -> None:
         """
         Predicts masks given an image and prompt embeddings, using a
@@ -354,6 +360,7 @@ class MaskDecoder3D(nn.Module):
                 embedding_dim=self.transformer_dim,
                 mlp_dim=2048,
                 num_heads=8,
+                use_text_features=use_text_features,
             )
 
         self.num_multimask_outputs = num_multimask_outputs
