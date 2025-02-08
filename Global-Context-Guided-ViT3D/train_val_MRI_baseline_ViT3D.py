@@ -225,6 +225,28 @@ class MRIDataset(Dataset):
         self.is_crop = is_crop
         self.padding_size = padding_size
         
+        self._get_data_statistic(self.data_dir, self.label_dict)
+
+    def _get_data_statistic(self, path, text_info):
+        
+        img_path = os.path.join(path, 'imagesTr')
+        num_Benign = 0
+        num_malignant = 0
+        for file in os.listdir(img_path):
+            if '_r' in file:
+                img_name = file.split('_r')[0].lower()
+            else:
+                img_name = file.split('.')[0].lower()
+            
+            category = text_info[img_name]
+            if category == 1:
+                num_malignant += 1
+            elif category == 0:
+                num_Benign += 1
+            
+        print(f'The number of Benign is {num_Benign}.')
+        print(f'The number of malignant is {num_malignant}.')
+
 
     def __len__(self):
         return len(self.file_names)
@@ -367,9 +389,6 @@ def train_model(model, M3D_CLIP_Model, train_loader, val_loader, device, num_epo
                 ]
                 , lr=learning_rate)
     
-
-
-    import pdb; pdb.set_trace()
     best_val_acc = 0.0  # 保存最高验证准确率
 
     for epoch in range(num_epochs):
@@ -517,6 +536,7 @@ def main(args):
     for k, v in MRI_excel_info_dict.items():
         label_dict[k] = int(v['tumour classification']) - 1
     # 加载预训练模型
+
     model = load_ViT3D_pretrained_model(args.pre_trained_model_path, n_classes=2, use_M3D_features=args.use_M3D_features)
 
     # 初始化 M3D 模型
