@@ -1,4 +1,4 @@
-python infer_sequence.py --seed 2023 \
+python infer_sequence.py --seed 2025 \
  -tdp ./data/inference -nc 1 \
  -cp ./work_dir/fine_tune_experimental_augmented/sam_model_latest.pth \
  --output_dir ./results/sequence  \

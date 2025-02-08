@@ -81,6 +81,40 @@ class Dataset_Union_ALL(Dataset):
             input_txt = f"The patient is a {age}-year-old {sex}. MRI imaging reveals a tumor in the {tumour_site} region on the {tumour_side} side of the patient's head. This is a salivary gland tumour of the human." 
             self.text_info[k] = input_txt
 
+        self._get_data_statistic(self.paths, self.text_info)
+
+    def _get_data_statistic(self, path, text_info):
+        img_path = os.path.join(path[0], 'imagesTr')
+        num_sublingual = 0
+        num_parotid = 0
+        num_submandibular = 0
+        num_left = 0
+        num_right = 0
+        for file in os.listdir(img_path):
+            if '_r' in file:
+                img_name = file.split('_r')[0].lower()
+            else:
+                img_name = file.split('.')[0].lower()
+            
+            text_info = self.text_info[img_name]
+            if 'sublingual region' in text_info:
+                num_sublingual += 1
+            elif 'parotid region' in text_info:
+                num_parotid += 1
+            elif 'submandibular region' in text_info:
+                num_submandibular += 1
+            
+            if 'left' in text_info:
+                num_left += 1
+            elif 'right' in text_info:
+                num_right += 1
+            
+        print(f'The number of sublingual is {num_sublingual}.')
+        print(f'The number of parotid is {num_parotid}.')
+        print(f'The number of submandibular is {num_submandibular}.')
+        print(f'The number of left is {num_left}.')
+        print(f'The number of right is {num_right}.')
+    
     def __len__(self):
         return len(self.label_paths)
 

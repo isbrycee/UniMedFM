@@ -150,8 +150,9 @@ def process_mri_and_masks(mri_folder, mask_folder, output_mri_folder, output_mas
 ################################################################################################################################
 ################ Start Execute ################
 # read and load the Image size of MRI.nii.gz 
-for i in os.listdir('/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/external_testset_gtmask_29_from_beijing_spacing1.5/labelsTr'):
-    img = nib.load(os.path.join('/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/external_testset_gtmask_29_from_beijing_spacing1.5/labelsTr',i))
+path = '/home/jinghao/projects/MICCAI25/comparisons_seg_res/SAM-Med3D/test/labelsTr'
+for i in os.listdir(path):
+    img = nib.load(os.path.join(path, i))
     print(i)
     print('Image size:', img.shape)
 
@@ -177,10 +178,10 @@ def resampled_nii_gz(input_path, output_path, target_spacing=(1.0, 1.0, 1.0)):
 #                    target_spacing=(1.0, 1.0, 1.0))
 
 # Example usage
-mri_folder = "/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/imagesTr"  # Replace with the path to the MRI folder
-mask_folder = "/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/labelsTr"  # Replace with the path to the mask folder
-output_mri_folder = "/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/external_testset_gtmask_29_from_beijing_spacing1.5_new/imagesTr"  # Replace with the output folder for MRI
-output_mask_folder = "/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/external_testset_gtmask_29_from_beijing_spacing1.5_new/labelsTr"  # Replace with the output folder for masks
+# mri_folder = "/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/imagesTr"  # Replace with the path to the MRI folder
+# mask_folder = "/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/labelsTr"  # Replace with the path to the mask folder
+# output_mri_folder = "/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/external_testset_gtmask_29_from_beijing_spacing1.5_new/imagesTr"  # Replace with the output folder for MRI
+# output_mask_folder = "/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/external_testset_gtmask_29_from_beijing_spacing1.5_new/labelsTr"  # Replace with the output folder for masks
 
 # Process MRI and mask files
 # process_mri_and_masks(mri_folder, mask_folder, output_mri_folder, output_mask_folder, target_spacing=(1.5, 1.5, 1.5))

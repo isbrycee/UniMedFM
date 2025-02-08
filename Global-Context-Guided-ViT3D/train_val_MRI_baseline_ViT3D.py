@@ -241,11 +241,13 @@ class MRIDataset(Dataset):
         img = nib.load(file_path).get_fdata()
         initial_img = img
         mask_file_path = file_path.replace('imagesTr', 'labelsTr')
-        if 'comparisons_seg_res' in mask_file_path:
-            mask_file_path = mask_file_path.split('.nii.gz')[0] + '_pred_best.nii.gz'
+        # if 'comparisons_seg_res' in mask_file_path:
+        #     mask_file_path = mask_file_path.split('.nii.gz')[0] + '_pred_best.nii.gz'
         
-        # if '_resampled' in mask_file_path:
-        #     mask_file_path = mask_file_path.split('_resampled')[0] + '.nii.gz'
+        if '_resampled' in mask_file_path:
+            mask_file_path = mask_file_path.split('_resampled')[0] + '_prediction.nii.gz'
+        else:
+            mask_file_path = mask_file_path.split('.nii.gz')[0] + '_prediction.nii.gz'
 
         # mask_file_path = mask_file_path.split('labelsTr/')[0] + 'labelsTr/' 'MR_Abd_' + mask_file_path.split('labelsTr/')[1]
         
@@ -254,9 +256,12 @@ class MRIDataset(Dataset):
 
         mask_data = nib.load(mask_file_path).get_fdata()
         
-        # if img.shape != mask_data.shape:
-        #     mask_data = self.resize(mask_data, img.shape)
-
+        if img.shape != mask_data.shape:
+            # print(img.shape)
+            # print(mask_data.shape)
+            img = self.resize(img, self.target_size)
+            mask_data = self.resize(mask_data, self.target_size)
+            # raise ValueError("The shape of the MRI image and the mask must be the same.")
         ########################## Crop ROI ##############################
         # 找到标注为 1 的最小内接长方体的边界
         if self.is_crop:
@@ -289,9 +294,6 @@ class MRIDataset(Dataset):
         # 调整尺寸到 target_size
         img = self.resize(img, self.target_size)
         mask_data = self.resize(mask_data, self.target_size)
-
-        if img.shape != mask_data.shape:
-            raise ValueError("The shape of the MRI image and the mask must be the same.")
 
         # 添加通道维度 (C, D, H, W)，适配 PyTorch 的 3D 卷积输入
         img = np.expand_dims(img, axis=0)
@@ -364,7 +366,10 @@ def train_model(model, M3D_CLIP_Model, train_loader, val_loader, device, num_epo
                 {'params': model.head.parameters()},
                 ]
                 , lr=learning_rate)
-   
+    
+
+
+    import pdb; pdb.set_trace()
     best_val_acc = 0.0  # 保存最高验证准确率
 
     for epoch in range(num_epochs):
@@ -506,6 +511,8 @@ def load_ViT3D_pretrained_model(pre_trained_model_path, n_classes, use_M3D_featu
 def main(args):
     # 数据集路径和标签字典
     MRI_excel_info_dict = read_excel_for_MRI_data(args.excel_path)
+
+
     label_dict = {}
     for k, v in MRI_excel_info_dict.items():
         label_dict[k] = int(v['tumour classification']) - 1

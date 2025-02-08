@@ -32,7 +32,7 @@ def visualize_labels_on_mri(image_folder, label_folder, output_folder):
         image = nib.load(image_path).get_fdata()
         print(image.shape)
         label = nib.load(label_path).get_fdata()
-
+        
         if image.shape != label.shape:
             raise ValueError(f"图像 {image_file} 和标签 {label_file} 的形状不匹配！")
 
@@ -61,8 +61,8 @@ def visualize_labels_on_mri(image_folder, label_folder, output_folder):
 
 if __name__ == "__main__":
     # 输入文件夹路径
-    image_folder = '/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/external_testset_gtmask_29_from_beijing/imagesTr/'
-    label_folder = '/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/external_testset_gtmask_29_from_beijing/labelsTr/'
-    output_folder = '/home/jinghao/projects/MICCAI25/External_data_Salivary_gland_tumours_Beijing/visualizations/'
+    image_folder = '/home/jinghao/projects/MICCAI25/comparisons_seg_res/SAM-Med3D/train/imagesTr/'
+    label_folder = '/home/jinghao/projects/MICCAI25/comparisons_seg_res/SAM-Med3D/train/labelsTr/'
+    output_folder = '/home/jinghao/projects/MICCAI25/visualizations/'
 
     visualize_labels_on_mri(image_folder, label_folder, output_folder)
